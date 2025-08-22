@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Laporan Penjualan Voucher @LSM</title>
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    body { background: #f5f7fb; }
+    .card { background: #fff; border-radius: 1rem; box-shadow: 0 10px 25px rgba(0,0,0,.05); }
+    th, td { white-space: nowrap; }
+  </style>
+</head>
+<body class="p-4">
+  <div class="max-w-6xl mx-auto card p-4">
+    <div class="flex items-center justify-between flex-wrap gap-3">
+      <h1 class="text-2xl font-bold">📊 Laporan Penjualan Voucher @LSM</h1>
+      <div class="text-xs text-gray-500" id="lastUpdated"></div>
+    </div>
+
+    <!-- Hanya tombol PDF -->
+    <div class="mt-4 flex justify-end">
+      <button id="btnPDF" class="px-4 py-2 rounded-lg bg-green-600 text-white">Cetak PDF</button>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto mt-4">
+      <table id="dataTable" class="min-w-full text-sm text-left">
+        <thead class="bg-gray-100 text-gray-700">
+          <tr>
+            <th class="px-4 py-2 border">Tanggal</th>
+            <th class="px-4 py-2 border">Nama Pembeli</th>
+            <th class="px-4 py-2 border">Paket</th>
+            <th class="px-4 py-2 border">Harga</th>
+            <th class="px-4 py-2 border">Keuntungan</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+        <tfoot class="bg-amber-50 font-bold">
+          <tr>
+            <td colspan="3" class="px-4 py-2 border text-center">TOTAL</td>
+            <td class="px-4 py-2 border" id="totalHarga">Rp 0</td>
+            <td class="px-4 py-2 border" id="totalUntung">Rp 0</td>
+          </tr>
+          <tr class="bg-red-100">
+            <td colspan="4" class="px-4 py-2 border text-center">LABA (Penjualan - Keuntungan)</td>
+            <td class="px-4 py-2 border" id="totalLaba">Rp 0</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ====== KONFIG ======
+    const SHEET_ID = "1tFxgDIVwVRBqFSIoxQsyh9NbeOCbDMOHy-RSgMEa_Fs"; 
+    const SHEET_NAME = "Sheet1"; 
+    const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
+
+    let allData = [];
+
+    const rupiah = n => (Number(n)||0).toLocaleString("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 });
+
+    function toNumber(val) {
+      if (typeof val === 'number') return val;
+      if (val == null) return 0;
+      let s = String(val).trim();
+      if (s.includes('.') && s.includes(',')) {
+        s = s.replace(/\./g, '').replace(/,/g, '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+      s = s.replace(/[^\d.-]/g, '');
+      const n = parseFloat(s);
+      return isNaN(n) ? 0 : n;
+    }
+
+    function parseTanggalSmart(t) {
+      if (t == null) return new Date('1970-01-01');
+      if (typeof t === 'number') {
+        return new Date(Math.round((t - 25569) * 86400 * 1000));
+      }
+      const s = String(t);
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s);
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) {
+        const [d,m,y] = s.split('/');
+        const yy = y.length === 2 ? '20'+y : y;
+        return new Date(`${yy}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`);
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? new Date('1970-01-01') : d;
+    }
+
+    function setLastUpdated() {
+      const el = document.getElementById('lastUpdated');
+      const d = new Date();
+      el.textContent = `Diperbarui: ${d.toLocaleString('id-ID')}`;
+    }
+
+    async function loadData() {
+      try {
+        const res = await fetch(SHEET_URL);
+        const text = await res.text();
+        const json = JSON.parse(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1));
+
+        const labels = (json.table?.cols || []).map(c => (c.label || '').toLowerCase().trim());
+        const idx = name => labels.findIndex(l => l === name || l.includes(name));
+        const iTanggal   = idx('tanggal');
+        const iNama      = idx('nama pembeli') !== -1 ? idx('nama pembeli') : idx('nama');
+        const iPaket     = idx('paket');
+        const iHarga     = idx('harga');
+        const iUntung    = idx('keuntungan');
+
+        const rows = json.table?.rows || [];
+        allData = rows.map(r => {
+          const c = r.c || [];
+          const rawTanggal = c[iTanggal]?.v ?? c[iTanggal]?.f ?? '';
+          const nama  = c[iNama]?.v ?? c[iNama]?.f ?? '';
+          const paket = c[iPaket]?.v ?? c[iPaket]?.f ?? '';
+          const harga = toNumber(c[iHarga]?.v ?? c[iHarga]?.f ?? 0);
+          const untung= toNumber(c[iUntung]?.v ?? c[iUntung]?.f ?? 0);
+          const displayTanggal = c[iTanggal]?.f ?? c[iTanggal]?.v ?? '';
+          return { tanggal: displayTanggal, _tglSort: parseTanggalSmart(rawTanggal), nama, paket, harga, untung };
+        }).filter(o => o.nama !== '' || o.paket !== '' || o.harga !== 0 || o.untung !== 0);
+
+        allData.sort((a,b) => a._tglSort - b._tglSort);
+        renderTable(allData);
+        setLastUpdated();
+      } catch (e) {
+        console.error(e);
+        alert("Gagal memuat data dari Google Sheet. Pastikan share = 'Anyone with the link: Viewer' dan label kolom: Tanggal, Nama Pembeli, Paket, Harga, Keuntungan.");
+      }
+    }
+
+    function renderTable(data) {
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+      const frag = document.createDocumentFragment();
+
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="px-4 py-2 border">${row.tanggal}</td>
+          <td class="px-4 py-2 border">${row.nama}</td>
+          <td class="px-4 py-2 border">${row.paket}</td>
+          <td class="px-4 py-2 border">${rupiah(row.harga)}</td>
+          <td class="px-4 py-2 border">${rupiah(row.untung)}</td>
+        `;
+        frag.appendChild(tr);
+      });
+      tbody.appendChild(frag);
+
+      const totalHarga = data.reduce((s, r) => s + (Number(r.harga)||0), 0);
+      const totalUntung = data.reduce((s, r) => s + (Number(r.untung)||0), 0);
+      const totalLaba = totalHarga - totalUntung;
+
+      document.getElementById('totalHarga').textContent = rupiah(totalHarga);
+      document.getElementById('totalUntung').textContent = rupiah(totalUntung);
+      document.getElementById('totalLaba').textContent = rupiah(totalLaba);
+    }
+
+    function cetakPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      doc.text("Laporan Penjualan Voucher @LSM", 14, 15);
+      doc.text("Periode: Semua Data", 14, 23);
+
+      const body = allData.map(r => [
+        r.tanggal,
+        r.nama,
+        r.paket,
+        rupiah(r.harga),
+        rupiah(r.untung)
+      ]);
+
+      doc.autoTable({
+        head: [["Tanggal", "Nama Pembeli", "Paket", "Harga", "Keuntungan"]],
+        body,
+        startY: 30,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [33, 150, 243] },
+        theme: 'grid',
+      });
+
+      const totalHarga = allData.reduce((s, r) => s + (Number(r.harga)||0), 0);
+      const totalUntung = allData.reduce((s, r) => s + (Number(r.untung)||0), 0);
+      const totalLaba = totalHarga - totalUntung;
+
+      const afterY = doc.lastAutoTable.finalY + 8;
+      doc.text(`Total Penjualan: ${rupiah(totalHarga)}`, 14, afterY);
+      doc.text(`Total Keuntungan: ${rupiah(totalUntung)}`, 14, afterY + 7);
+      doc.text(`Laba (Penjualan - Keuntungan): ${rupiah(totalLaba)}`, 14, afterY + 14);
+
+      doc.save('Laporan-LSM.pdf');
+    }
+
+    document.getElementById('btnPDF').addEventListener('click', cetakPDF);
+
+    loadData();
+  </script>
+</body>
+</html>
