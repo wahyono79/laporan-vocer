@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Manajemen Penjualan Voucher WiFi</title>
+  <script>
+    function loadData(){
+      google.script.run.withSuccessHandler(renderTable).getData();
+      google.script.run.withSuccessHandler(renderSummary).getSummary();
+    }
+
+    function renderTable(data){
+      let html = "<table border='1'><tr><th>Tanggal</th><th>Nama</th><th>Paket</th><th>Harga</th><th>Kode Voucher</th><th>Fee</th><th>Setoran</th></tr>";
+      data.forEach(r=>{
+        html += `<tr>${r.map(c=>"<td>"+c+"</td>").join("")}</tr>`;
+      });
+      html += "</table>";
+      document.getElementById("table").innerHTML = html;
+    }
+
+    function renderSummary(summary){
+      document.getElementById("summary").innerHTML =
+        `Total Penjualan: ${summary.totalHarga} | Total Fee: ${summary.totalFee} | Total Setoran: ${summary.totalBersih}`;
+    }
+
+    function setor(){
+      if(confirm("Yakin ingin setor semua data?")){
+        google.script.run.setorData();
+        setTimeout(loadData, 1000);
+      }
+    }
+
+    function printPDF(){
+      window.print();
+    }
+
+    window.onload = loadData;
+  </script>
+</head>
+<body>
+  <h1>Manajemen Penjualan Voucher WiFi</h1>
+  <button onclick="setor()">Setor</button>
+  <button onclick="printPDF()">Print PDF</button>
+  <div id="summary"></div>
+  <div id="table"></div>
+</body>
+</html>
